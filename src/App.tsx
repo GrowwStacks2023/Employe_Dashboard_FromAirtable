@@ -7,7 +7,7 @@ import TeamDashboard from './components/TeamDashboard';
 import MonthSelector from './components/MonthSelector';
 import CSVUploadPage from './components/CSVUploadPage';
 import TeamLoggerImportPanel from './components/TeamLoggerImportPanel';
-import { DatabaseService, type MonthYear, type PerformanceRating } from './services/databaseService';
+import { DatabaseService, invalidateCache, type MonthYear, type PerformanceRating } from './services/databaseService';
 import type { TimesheetRecord, ProcessedStats } from './types/timesheet';
 import type { EmployeeData, TeamStats } from './types/teamDashboard';
 
@@ -27,6 +27,7 @@ function App() {
   const [availableMonths, setAvailableMonths] = useState<MonthYear[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<MonthYear | null>(null);
   const [isLoadingMonths, setIsLoadingMonths] = useState(true);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
 
   // Performance ratings state
@@ -61,6 +62,7 @@ function App() {
       console.error('Error loading available months:', error);
     } finally {
       setIsLoadingMonths(false);
+      setIsInitialLoad(false);
     }
   };
 
@@ -267,6 +269,8 @@ function App() {
   };
 
   const handleUploadSuccess = (employeeData: EmployeeData[], month: number, year: number) => {
+    // Clear cache so fresh data is used
+    invalidateCache(month, year);
     // Update the current data with newly uploaded data
     setTeamData(employeeData);
     const newTeamStats = calculateTeamStats(employeeData, performanceRatings);
@@ -292,6 +296,8 @@ function App() {
   };
 
   const handleTeamLoggerImportSuccess = (employeeData: EmployeeData[], month: number, year: number) => {
+    // Clear cache so fresh data is used
+    invalidateCache(month, year);
     // Update the current data with newly imported data
     setTeamData(employeeData);
     const newTeamStats = calculateTeamStats(employeeData, performanceRatings);
@@ -355,7 +361,7 @@ function App() {
     );
   }
 
-  if (currentStep === 'processing') {
+  if (currentStep === 'processing' || isInitialLoad) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
         <div className="text-center">

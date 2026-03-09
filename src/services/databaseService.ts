@@ -72,9 +72,37 @@ const batchArray = <T>(array: T[], batchSize: number = 10): T[][] => {
   return batches;
 };
 
+// --- In-memory cache (lives for the duration of the browser session) ---
+interface CacheEntry<T> { data: T; timestamp: number }
+const _cache = new Map<string, CacheEntry<unknown>>();
+const CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+function getCached<T>(key: string): T | null {
+  const entry = _cache.get(key);
+  if (entry && Date.now() - entry.timestamp < CACHE_TTL) {
+    return entry.data as T;
+  }
+  return null;
+}
+
+function setCached<T>(key: string, data: T): void {
+  _cache.set(key, { data, timestamp: Date.now() });
+}
+
+// Call this after uploading/importing new data so stale cache is cleared
+export function invalidateCache(month?: number, year?: number): void {
+  if (month !== undefined && year !== undefined) {
+    _cache.delete(`month_data_${month}_${year}`);
+  }
+  _cache.delete('available_months');
+}
+
 export class DatabaseService {
   // Get available months from database
   static async getAvailableMonths(): Promise<MonthYear[]> {
+    const cached = getCached<MonthYear[]>('available_months');
+    if (cached) return cached;
+
     try {
       const records = await base(TABLES.EMPLOYEE_MONTHLY_STATS)
         .select({
@@ -87,12 +115,12 @@ export class DatabaseService {
         .all();
 
       const uniqueMonths = new Map<string, MonthYear>();
-      
+
       records.forEach(record => {
         const month = record.fields[COLUMN_MAPPING.month] as number;
         const year = record.fields[COLUMN_MAPPING.year] as number;
         const key = `${year}-${month}`;
-        
+
         if (!uniqueMonths.has(key)) {
           const monthNames = [
             'January', 'February', 'March', 'April', 'May', 'June',
@@ -106,7 +134,9 @@ export class DatabaseService {
         }
       });
 
-      return Array.from(uniqueMonths.values());
+      const result = Array.from(uniqueMonths.values());
+      setCached('available_months', result);
+      return result;
     } catch (error) {
       console.error('Error fetching available months:', error);
       return [];
@@ -146,7 +176,7 @@ export class DatabaseService {
         })
         .all();
 
-      return records.length > 0 ? records[0].createdTime : null;
+      return records.length > 0 ? (records[0] as any).createdTime : null;
     } catch (error) {
       console.error('Error fetching last updated timestamp:', error);
       return null;
@@ -289,42 +319,46 @@ export class DatabaseService {
     lastUpdated: string | null;
     hasData: boolean;
   }> {
+    const cacheKey = `month_data_${month}_${year}`;
+    const cached = getCached<{ employeeData: EmployeeData[]; performanceRatings: PerformanceRating[]; lastUpdated: string | null; hasData: boolean }>(cacheKey);
+    if (cached) {
+      console.log(`⚡ Serving ${month}/${year} from cache`);
+      return cached;
+    }
+
     try {
       console.log(`🔍 Loading month data from Airtable for ${month}/${year}`);
-      
-      // Get performance ratings FIRST
-      const performanceRatings = await this.getPerformanceRatings(month, year);
+
+      // Run all 3 queries in parallel instead of sequentially
+      const [performanceRatings, statsRecords, recordsData] = await Promise.all([
+        this.getPerformanceRatings(month, year),
+        base(TABLES.EMPLOYEE_MONTHLY_STATS)
+          .select({
+            filterByFormula: `AND({${COLUMN_MAPPING.month}} = ${month}, {${COLUMN_MAPPING.year}} = ${year})`,
+            sort: [{ field: COLUMN_MAPPING.employee_name, direction: 'asc' }]
+          })
+          .all(),
+        base(TABLES.TIMESHEET_RECORDS)
+          .select({
+            filterByFormula: `AND({${COLUMN_MAPPING.month}} = ${month}, {${COLUMN_MAPPING.year}} = ${year})`,
+            sort: [
+              { field: COLUMN_MAPPING.employee_name, direction: 'asc' },
+              { field: COLUMN_MAPPING.date, direction: 'asc' }
+            ]
+          })
+          .all()
+      ]);
+
       console.log(`⭐ DatabaseService - Found ${performanceRatings.length} performance ratings for ${month}/${year}`);
-      
-      // Get employee stats
-      const statsRecords = await base(TABLES.EMPLOYEE_MONTHLY_STATS)
-        .select({
-          filterByFormula: `AND({${COLUMN_MAPPING.month}} = ${month}, {${COLUMN_MAPPING.year}} = ${year})`,
-          sort: [{ field: COLUMN_MAPPING.employee_name, direction: 'asc' }]
-        })
-        .all();
-      
       console.log(`🔍 Found ${statsRecords.length} employee stats records`);
+      console.log(`🔍 Found ${recordsData.length} timesheet records`);
 
       if (statsRecords.length === 0) {
         return { employeeData: [], performanceRatings, lastUpdated: null, hasData: false };
       }
 
-      // Get timesheet records
-      const recordsData = await base(TABLES.TIMESHEET_RECORDS)
-        .select({
-          filterByFormula: `AND({${COLUMN_MAPPING.month}} = ${month}, {${COLUMN_MAPPING.year}} = ${year})`,
-          sort: [
-            { field: COLUMN_MAPPING.employee_name, direction: 'asc' },
-            { field: COLUMN_MAPPING.date, direction: 'asc' }
-          ]
-        })
-        .all();
-      
-      console.log(`🔍 Found ${recordsData.length} timesheet records`);
-
-      // Get last updated timestamp
-      const lastUpdated = await this.getLastUpdatedTimestamp(month, year);
+      // Reuse already-fetched stats records for timestamp (avoids extra API call)
+      const lastUpdated = statsRecords.length > 0 ? (statsRecords[0] as any).createdTime : null;
 
       // Group records by employee
       const recordsByEmployee = new Map<string, TimesheetRecord[]>();
@@ -386,7 +420,9 @@ export class DatabaseService {
         };
       });
 
-      return { employeeData, performanceRatings, lastUpdated, hasData: true };
+      const result = { employeeData, performanceRatings, lastUpdated, hasData: true };
+      setCached(cacheKey, result);
+      return result;
     } catch (error) {
       console.error('Error loading month data from Airtable:', error);
       return { employeeData: [], performanceRatings: [], lastUpdated: null, hasData: false };
