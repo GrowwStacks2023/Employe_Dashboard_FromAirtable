@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { BarChart3, FileText, Calendar, Clock, AlertTriangle, Users, ArrowLeft, Database, RefreshCw, CheckCircle2, Star, Upload, Download } from 'lucide-react';
-// Database service handles all Airtable operations
+// Database service handles all Neon PostgreSQL operations
 import Dashboard from './components/Dashboard';
 import TimesheetTable from './components/TimesheetTable';
 import TeamDashboard from './components/TeamDashboard';
@@ -223,7 +223,7 @@ function App() {
         console.warn(`⚠️ Stats show ${selectedEmployee.stats.totalWorkingDays + selectedEmployee.stats.totalSundays + selectedEmployee.stats.totalLeaveDays} total days but 0 records`);
         console.warn(`⚠️ This will result in an empty timesheet table`);
         
-        // Try to reload data for this specific employee from Airtable
+        // Try to reload data for this specific employee from Neon
         if (selectedMonth) {
           console.warn(`⚠️ Attempting to reload data for ${selectedMonth.month}/${selectedMonth.year}...`);
           try {
@@ -231,7 +231,7 @@ function App() {
             const reloadedEmployee = reloadedData.find(emp => emp.employeeName.trim().toLowerCase() === selectedEmployeeName.trim().toLowerCase());
             if (reloadedEmployee && reloadedEmployee.records.length > 0) {
               selectedEmployee.records = reloadedEmployee.records;
-              console.warn(`⚠️ Reloaded ${reloadedEmployee.records.length} records from Airtable`);
+              console.warn(`⚠️ Reloaded ${reloadedEmployee.records.length} records from Neon`);
             }
           } catch (queryError) {
             console.warn('⚠️ Failed to reload employee records:', queryError);
@@ -694,7 +694,7 @@ function App() {
               <div className="bg-gray-50 rounded-lg p-4">
                 <h3 className="font-semibold text-gray-900 mb-2">Base URL</h3>
                 <code className="text-sm bg-gray-200 px-2 py-1 rounded">
-                  Airtable API (Base: {import.meta.env.VITE_AIRTABLE_BASE_ID})
+                  Neon PostgreSQL
                 </code>
               </div>
 
